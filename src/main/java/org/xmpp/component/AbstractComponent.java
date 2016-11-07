@@ -21,6 +21,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
@@ -130,9 +131,12 @@ public abstract class AbstractComponent implements Component {
 	protected JID jid = null;
 	
 	/**
-	 * The pool of threads that will process the queue.
+	 * The executor service that will process the queue. Unless
+	 * {@link #createExecutorService(int, int)} is overridden by the
+	 * implementing class, the <tt>ThreadPoolExecutor</tt> service will be used
+	 * by default.
 	 */
-	private ThreadPoolExecutor executor;
+	private ExecutorService executor;
 
 	/**
 	 * The maximum number of threads that will process work for this component.
@@ -210,7 +214,7 @@ public abstract class AbstractComponent implements Component {
 			
 		}
 		try {
-			executor.execute(new PacketProcessor(copy));
+			executor.execute(createPacketProcessor(copy));
 		} catch (RejectedExecutionException ex) {
 			log.error("(serving component '" + getName()
 					+ "') Unable to process packet! "
@@ -225,6 +229,25 @@ public abstract class AbstractComponent implements Component {
 				send(response);
 			}
 		}
+	}
+
+	/**
+	 * The method is called when a new incoming XMPP packet is being scheduled
+	 * for the processing on the <tt>ExecutorService</tt>. This is an extension
+	 * point for injecting custom {@link PacketProcessor} class (which might be
+	 * required sometimes when using custom {@link #executor}).
+	 *
+	 * @param copy
+	 *            a copy of the <tt>Packet</tt> that is to be processed by the
+	 *            new <tt>PacketProcessor</tt> instance.
+	 *
+	 * @return unless overridden by the implementing class a new instance of
+	 *         the {@link PacketProcessor} for given <tt>packet</tt> will be
+	 *         returned.
+     */
+	protected PacketProcessor createPacketProcessor(Packet copy)
+	{
+		return new PacketProcessor(copy);
 	}
 
 	/**
@@ -969,10 +992,31 @@ public abstract class AbstractComponent implements Component {
 
 	private void startExecutor() {
 		if (executor == null || executor.isShutdown()) {
-			executor = new ThreadPoolExecutor(maxThreadPoolSize,
-					maxThreadPoolSize, 60L, TimeUnit.SECONDS,
-					new LinkedBlockingQueue<Runnable>(maxQueueSize));
+			executor = createExecutorService(maxThreadPoolSize, maxQueueSize);
 		}
+	}
+
+	/**
+	 * Creates a new instance of the <tt>ExecutorService</tt> for given thread
+	 * pool and queue sizes.
+	 *
+	 * @param maxThreadPoolSize
+	 *            the maximum number of threads that will process work for this
+	 *            component.
+	 * @param maxQueueSize
+	 *            capacity of the queue that holds tasks that are to be executed
+	 *            by the thread pool.
+	 *
+     * @return <tt>ExecutorService</tt> instance which will be used to execute
+	 *         the packet processing task. Unless overridden by the implementing
+	 *         class a <tt>ThreadPoolExecutor</tt> will be returned by default.
+     */
+	protected ExecutorService createExecutorService(int maxThreadPoolSize,
+			int maxQueueSize) {
+		return new ThreadPoolExecutor(
+				maxThreadPoolSize, maxThreadPoolSize,
+				60L, TimeUnit.SECONDS,
+				new LinkedBlockingQueue<Runnable>(maxQueueSize));
 	}
 	
 	/**
@@ -1026,11 +1070,11 @@ public abstract class AbstractComponent implements Component {
 	 * 
 	 * @author Guus der Kinderen, guus.der.kinderen@gmail.com
 	 */
-	private class PacketProcessor implements Runnable {
+	protected class PacketProcessor implements Runnable {
 		/**
 		 * The packet to be processed.
 		 */
-		private final Packet packet;
+		protected final Packet packet;
 
 		/**
 		 * Creates a new wrapper for a Packet.
